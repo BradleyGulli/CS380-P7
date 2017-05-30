@@ -1,6 +1,7 @@
 import java.security.*;
 import java.security.interfaces.RSAPublicKey;
 import java.io.*;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
 
@@ -21,7 +22,7 @@ public class FileTransfer {
 			}
 			
 			if(args[0].equals("client") && args.length == 4 ){
-				clientMode();
+				clientMode(args[2], args[3]);
 				modeSelected = true;
 			} else if(!modeSelected){
 				System.out.println("Proper usage to run in client mode: java FileTransfer client <public key file> <host> <port>");
@@ -45,10 +46,18 @@ public class FileTransfer {
 
 	private static void serverModer() {
 		// TODO Auto-generated method stub
+		try {
+			ServerSocket serSocket = new ServerSocket();
+			
+//			InputStream is = socket.getInputStream();
+//			 ObjectInputStream ois = new ObjectInputStream(is);
+//			 InputStreamReader isr = new InputStreamReader(ois);
+//			 BufferedReader br = new BufferedReader(isr);
+		} catch (Exception e) { }
 		
 	}
 
-	private static void clientMode() throws Exception {
+	private static void clientMode(String host, String port) throws Exception {
 		ObjectInputStream in = new ObjectInputStream(new FileInputStream("public.bin"));
 		RSAPublicKey publicKey = (RSAPublicKey) in.readObject();
 		KeyGenerator keyGen = KeyGenerator.getInstance("AES");
@@ -66,12 +75,42 @@ public class FileTransfer {
 		System.out.println("Enter chunk size [1024]: ");
 		byte chunkSize = kb.nextByte();
 		StartMessage sm = new StartMessage(file.getName(), wrappedSessionKey, chunkSize);
-		try (Socket socket = new Socket("localhost", 38007)) {
+		try (Socket socket = new Socket(host, Integer.parseInt(port))) {
 			OutputStream os = socket.getOutputStream();
 			ObjectOutputStream oos = new ObjectOutputStream(os);
 			oos.writeObject(sm);
 		}
 		
+		/////////
+		// Server responds with ACK
+		int numberOfChunks = 1024 / (int) chunkSize;
+		AckMessage serverAck = (AckMessage) in.readObject();
+		if( serverAck.getSeq() == 0 ) {
+			file.length();
+			System.out.println("Sending: " + file.getName() + ". File size: " + file.length() + ".");
+			System.out.println("Sending " + numberOfChunks + " chunks.");
+			sendFile(numberOfChunks, chunkSize, host, port, file);
+		} else {
+			System.out.println("Unable to proceed with transfer.");
+		}
+		
+	}
+	
+	public static void sendFile(int numberOfChunks, int chunkSize, String host, String port, File file) {
+		try {
+			boolean done = false;
+			Socket socket = new Socket(host, Integer.parseInt(port));
+			ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
+			ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+			FileInputStream fin = new FileInputStream(file);
+			byte[] bytesInFile = new byte[(int)file.length()];
+			fin.read(bytesInFile); // reading file in bytes
+			while(!done) {
+				for(int i = 0; i < chunkSize; ++i) { // this will need to be dynamic with changing index
+					oos.writeByte(bytesInFile[i]);
+				}
+			}
+		} catch (Exception e) { }
 	}
 
 	private static void makeKeys() {
