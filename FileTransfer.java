@@ -1,7 +1,7 @@
 import java.security.*;
 import java.security.interfaces.RSAPublicKey;
 import java.io.*;
-import java.net.Socket;
+import java.net.*;
 import java.util.*;
 
 import javax.crypto.Cipher;
@@ -21,14 +21,19 @@ public class FileTransfer {
 			}
 			
 			if(args[0].equals("client") && args.length == 4 ){
-				clientMode();
+				String pubKey = args[1];
+				String host = args[2];
+				String port = args[3];
+				clientMode(port, host, pubKey);
 				modeSelected = true;
 			} else if(!modeSelected){
 				System.out.println("Proper usage to run in client mode: java FileTransfer client <public key file> <host> <port>");
 			}
 			
 			if(args[0].equals("server") && args.length == 3){
-				serverModer();
+				String privKey = args[1];
+				String port = args[2];
+				serverMode(privKey, port);
 				modeSelected = true;
 			} else if(!modeSelected){
 				System.out.println("Proper usage to run in server mode: java FileTransfer server <private key file> <port>");
@@ -43,13 +48,31 @@ public class FileTransfer {
 		
 	}
 
-	private static void serverModer() {
-		// TODO Auto-generated method stub
+	private static void serverMode(String priveKey, String port) {
+		try {
+			ServerSocket serSocket = new ServerSocket(Integer.parseInt(port));
+			Socket socket = serSocket.accept();
+			
+			InputStream is = socket.getInputStream();
+			ObjectInputStream ois = new ObjectInputStream(is);
+			InputStreamReader isr = new InputStreamReader(ois);
+			BufferedInputStream bis = new BufferedInputStream(ois);
+			//byte[] b = new byte[10];
+ 			//bis.read(b);
+ 			//System.out.println(b.toString());
+			StartMessage s = (StartMessage)ois.readObject();
+			System.out.println(s.getFile());
+			OutputStream os = socket.getOutputStream();
+			ObjectOutputStream oos = new ObjectOutputStream(os);
+			AckMessage ack = new AckMessage(0);
+			oos.writeObject(ack);
+			
+		} catch (Exception e) { }
 		
 	}
 
-	private static void clientMode() throws Exception {
-		ObjectInputStream in = new ObjectInputStream(new FileInputStream("public.bin"));
+	private static void clientMode(String port, String host, String pubKey) throws Exception {
+		ObjectInputStream in = new ObjectInputStream(new FileInputStream(pubKey));
 		RSAPublicKey publicKey = (RSAPublicKey) in.readObject();
 		KeyGenerator keyGen = KeyGenerator.getInstance("AES");
 		keyGen.init(256);
@@ -66,11 +89,16 @@ public class FileTransfer {
 		System.out.println("Enter chunk size [1024]: ");
 		byte chunkSize = kb.nextByte();
 		StartMessage sm = new StartMessage(file.getName(), wrappedSessionKey, chunkSize);
-		try (Socket socket = new Socket("localhost", 38007)) {
+		try (Socket socket = new Socket(host, Integer.parseInt(port))) {
 			OutputStream os = socket.getOutputStream();
 			ObjectOutputStream oos = new ObjectOutputStream(os);
 			oos.writeObject(sm);
+			InputStream is = socket.getInputStream();
+			ObjectInputStream ois = new ObjectInputStream(is);
+			AckMessage ack = (AckMessage)ois.readObject();
+			System.out.println(ack.getSeq());
 		}
+		
 		
 	}
 
