@@ -104,6 +104,7 @@ public class FileTransfer {
 		File file = new File(path);
 		System.out.println("Enter chunk size [1024]: ");
 		byte chunkSize = kb.nextByte();
+		int numberOfChunks = 1024 / (int) chunkSize;
 		StartMessage sm = new StartMessage(file.getName(), wrappedSessionKey, chunkSize);
 		try (Socket socket = new Socket(host, Integer.parseInt(port))) {
 			OutputStream os = socket.getOutputStream();
@@ -113,9 +114,16 @@ public class FileTransfer {
 			ObjectInputStream ois = new ObjectInputStream(is);
 			AckMessage ack = (AckMessage)ois.readObject();
 			System.out.println(ack.getSeq());
+			if(ack.getSeq() == 0)
+				beginTransfer(file, numberOfChunks);
 		}
 		
 		
+	}
+	
+	public static void beginTransfer(File file, int numberOfChunks) {
+		System.out.println("Sending: " + file.getName() + " File size: " + file.length());
+		System.out.println("Sending " + numberOfChunks + " chunks.");
 	}
 
 	private static void makeKeys() {
