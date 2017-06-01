@@ -1,4 +1,5 @@
 import java.security.*;
+import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.io.*;
 import java.net.*;
@@ -48,24 +49,39 @@ public class FileTransfer {
 		
 	}
 
-	private static void serverMode(String priveKey, String port) {
+	private static void serverMode(String privateKey, String port) {
 		try {
 			ServerSocket serSocket = new ServerSocket(Integer.parseInt(port));
 			Socket socket = serSocket.accept();
-			
-			InputStream is = socket.getInputStream();
-			ObjectInputStream ois = new ObjectInputStream(is);
+		
+			ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
 			InputStreamReader isr = new InputStreamReader(ois);
 			BufferedInputStream bis = new BufferedInputStream(ois);
-			//byte[] b = new byte[10];
- 			//bis.read(b);
- 			//System.out.println(b.toString());
-			StartMessage s = (StartMessage)ois.readObject();
-			System.out.println(s.getFile());
-			OutputStream os = socket.getOutputStream();
-			ObjectOutputStream oos = new ObjectOutputStream(os);
-			AckMessage ack = new AckMessage(0);
-			oos.writeObject(ack);
+			
+			ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+			Message s = (Message)ois.readObject();
+			
+			if(s instanceof DisconnectMessage) {
+				// Close connection, wait for new one
+			}
+			
+			if(s instanceof StopMessage) {
+				
+			}
+			
+			if(s instanceof StartMessage) {
+				// Prepare for transfer
+				ObjectInputStream in = new ObjectInputStream(new FileInputStream(privateKey));
+				RSAPrivateKey pKey = (RSAPrivateKey) in.readObject();
+				byte[] sessionKey = ((StartMessage) s).getEncryptedKey();
+				Cipher cipher = Cipher.getInstance("RSA");
+				cipher.init(Cipher.UNWRAP_MODE, pKey); // not sure if this is proper decrypt
+				
+				System.out.println(((StartMessage) s).getFile());
+				AckMessage ack = new AckMessage(0);
+				oos.writeObject(ack);
+				
+			}
 			
 		} catch (Exception e) { }
 		
