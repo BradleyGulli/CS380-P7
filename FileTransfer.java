@@ -1,14 +1,12 @@
 import java.security.*;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
+import java.security.interfaces.*;
 import java.io.*;
 import java.net.*;
+import java.nio.file.*;
 import java.util.*;
+import java.util.zip.CRC32;
 
-import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
-
+import javax.crypto.*;
 public class FileTransfer {
 	
 	public static void main(String[] args) throws Exception{
@@ -17,7 +15,7 @@ public class FileTransfer {
 			if(args[0].equals("makekeys") && args.length == 1){
 				makeKeys();
 				modeSelected = true;
-			} else{
+			} else if(modeSelected){
 				System.out.println("Proper usage to make keys: java FileTransfer makekeys");
 			}
 			
@@ -27,7 +25,7 @@ public class FileTransfer {
 				String port = args[3];
 				clientMode(port, host, pubKey);
 				modeSelected = true;
-			} else if(!modeSelected){
+			} else if(modeSelected){
 				System.out.println("Proper usage to run in client mode: java FileTransfer client <public key file> <host> <port>");
 			}
 			
@@ -36,7 +34,7 @@ public class FileTransfer {
 				String port = args[2];
 				serverMode(privKey, port);
 				modeSelected = true;
-			} else if(!modeSelected){
+			} else if(modeSelected){
 				System.out.println("Proper usage to run in server mode: java FileTransfer server <private key file> <port>");
 			}
 		} else{
@@ -49,41 +47,51 @@ public class FileTransfer {
 		
 	}
 
-	private static void serverMode(String privateKey, String port) {
+	private static void serverMode(String privKey, String port) {
 		try {
 			ServerSocket serSocket = new ServerSocket(Integer.parseInt(port));
 			Socket socket = serSocket.accept();
-		
-			ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
-			InputStreamReader isr = new InputStreamReader(ois);
-			BufferedInputStream bis = new BufferedInputStream(ois);
 			
-			ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
-			Message s = (Message)ois.readObject();
+			InputStream is = socket.getInputStream();
+			ObjectInputStream ois = new ObjectInputStream(is);
+			DataInputStream dis = new DataInputStream(is);
 			
-			if(s instanceof DisconnectMessage) {
-				// Close connection, wait for new one
+			StartMessage s = (StartMessage)ois.readObject();
+			byte[] wrappedSessionKey = s.getEncryptedKey();
+			ObjectInputStream in = new ObjectInputStream(new FileInputStream(privKey));
+			RSAPrivateKey rsa = (RSAPrivateKey) in.readObject();
+			Cipher cipher = Cipher.getInstance("RSA");
+			cipher.init(Cipher.UNWRAP_MODE, rsa);
+			Key key = cipher.unwrap(wrappedSessionKey, "AES", Cipher.SECRET_KEY);
+			System.out.println(s.getFile());
+			
+			OutputStream os = socket.getOutputStream();
+			ObjectOutputStream oos = new ObjectOutputStream(os);
+			AckMessage ack = new AckMessage(0);
+			oos.writeObject(ack);
+			cipher = Cipher.getInstance("AES");
+			cipher.init(Cipher.DECRYPT_MODE, key);
+			
+			String message = "";
+			
+			int x = 16;
+			while((x % s.getChunkSize()) == x){
+				x *=2;
 			}
-			
-			if(s instanceof StopMessage) {
-				
+			int size = s.getChunkSize();
+			size += (x % s.getChunkSize());
+			byte[] b = new byte[size];
+			byte[] decrypted = null;
+			while(dis.read(b) != -1){
+				decrypted = cipher.doFinal(b);
+				message += new String(decrypted);
+				b= new byte[size];
 			}
-			
-			if(s instanceof StartMessage) {
-				// Prepare for transfer
-				ObjectInputStream in = new ObjectInputStream(new FileInputStream(privateKey));
-				RSAPrivateKey pKey = (RSAPrivateKey) in.readObject();
-				byte[] sessionKey = ((StartMessage) s).getEncryptedKey();
-				Cipher cipher = Cipher.getInstance("RSA");
-				cipher.init(Cipher.UNWRAP_MODE, pKey); // not sure if this is proper decrypt
-				
-				System.out.println(((StartMessage) s).getFile());
-				AckMessage ack = new AckMessage(0);
-				oos.writeObject(ack);
-				
-			}
-			
-		} catch (Exception e) { }
+			System.out.println(message);
+		} catch (Exception e) { 
+			System.out.println("error");
+			e.printStackTrace();
+		}
 		
 	}
 
@@ -91,7 +99,7 @@ public class FileTransfer {
 		ObjectInputStream in = new ObjectInputStream(new FileInputStream(pubKey));
 		RSAPublicKey publicKey = (RSAPublicKey) in.readObject();
 		KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-		keyGen.init(256);
+		keyGen.init(128);
 		SecretKey sessionKey = keyGen.generateKey();
 		
 		Cipher cipher = Cipher.getInstance("RSA");
@@ -100,30 +108,43 @@ public class FileTransfer {
 		
 		System.out.println("Enter the file path: " );
 		Scanner kb = new Scanner(System.in);
-		String path = kb.next();
-		File file = new File(path);
+		String filePath = kb.next();
+		Path path = Paths.get(filePath);
+		byte[] data = Files.readAllBytes(path);
+		System.out.println(new String(data));
+
 		System.out.println("Enter chunk size [1024]: ");
-		byte chunkSize = kb.nextByte();
-		int numberOfChunks = 1024 / (int) chunkSize;
-		StartMessage sm = new StartMessage(file.getName(), wrappedSessionKey, chunkSize);
+		int chunkSize = kb.nextInt();
+		StartMessage sm = new StartMessage(path.getFileName().toString(), wrappedSessionKey, chunkSize);
 		try (Socket socket = new Socket(host, Integer.parseInt(port))) {
 			OutputStream os = socket.getOutputStream();
 			ObjectOutputStream oos = new ObjectOutputStream(os);
+			DataOutputStream dos = new DataOutputStream(os);
 			oos.writeObject(sm);
 			InputStream is = socket.getInputStream();
 			ObjectInputStream ois = new ObjectInputStream(is);
 			AckMessage ack = (AckMessage)ois.readObject();
 			System.out.println(ack.getSeq());
-			if(ack.getSeq() == 0)
-				beginTransfer(file, numberOfChunks);
+			int leftOver = data.length % chunkSize;
+			int chunks = data.length / chunkSize;
+			int placement = 0;
+		    cipher = Cipher.getInstance("AES");
+			cipher.init(Cipher.ENCRYPT_MODE, sessionKey);  
+			for(int i = 0; i < chunks; i++){
+				byte[] toSend = new byte[chunkSize];
+				byte[] encrypted = null; 
+				for(int j = 0, k = placement; j < chunkSize; j++, k++){
+					toSend[j] = data[k];
+				}
+				
+			    encrypted = cipher.doFinal(toSend);
+			    System.out.println(encrypted.length);
+				//System.out.println(new String(toSend));
+				dos.write(encrypted);
+				placement += chunkSize;
+			}
 		}
 		
-		
-	}
-	
-	public static void beginTransfer(File file, int numberOfChunks) {
-		System.out.println("Sending: " + file.getName() + " File size: " + file.length());
-		System.out.println("Sending " + numberOfChunks + " chunks.");
 	}
 
 	private static void makeKeys() {
